@@ -219,12 +219,42 @@ async function sendPairingCode(sock, pairNumber) {
         method: 'POST',
         body: code,
         headers: { Title: 'WhatsApp Pairing Code', Priority: 'urgent' },
-      })
-        .then(() => console.log('Code sent to ntfy'))
-        .catch((e) => console.log('ntfy error:', e.message));
+      }).catch(() => {});
     }
   } catch (e) {
     console.log('Pairing code error:', e.message);
+  }
+}
+
+// ---------- QR printed with plain block characters (works in GitHub logs) ----------
+// Filled block = light module, empty = dark module (made for GitHub DARK theme)
+function printQr(qr) {
+  try {
+    const QRCode = require('qrcode');
+    const modules = QRCode.create(qr, { errorCorrectionLevel: 'L' }).modules;
+    const size = modules.size;
+    const margin = 2;
+    const total = size + margin * 2;
+    const isDark = (x, y) =>
+      x >= margin && y >= margin && x < size + margin && y < size + margin && !!modules.get(x - margin, y - margin);
+
+    const lines = [];
+    for (let y = 0; y < total; y += 2) {
+      let line = '';
+      for (let x = 0; x < total; x++) {
+        const top = !isDark(x, y);
+        const bottom = y + 1 < total ? !isDark(x, y + 1) : true;
+        if (top && bottom) line += '\u2588';
+        else if (top) line += '\u2580';
+        else if (bottom) line += '\u2584';
+        else line += ' ';
+      }
+      lines.push(line);
+    }
+    console.log('\n' + lines.join('\n') + '\n');
+  } catch (e) {
+    console.log('qrcode package missing, using fallback:', e.message);
+    qrcode.generate(qr, { small: true });
   }
 }
 
@@ -256,14 +286,15 @@ async function start() {
   sock.ev.on('creds.update', saveCreds);
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    // When the first QR event fires the connection is ready: request the pairing code now
+    // Pairing code mode (only when a pair number is given)
     if (qr && pairNumber && !sock.authState.creds.registered && !pairRequested) {
       pairRequested = true;
       sendPairingCode(sock, pairNumber);
     }
+    // QR mode: print the QR in the logs
     if (qr && !pairNumber) {
-      console.log('\nScan this QR from another device: WhatsApp > Linked Devices > Link a device (refreshes every ~20s):\n');
-      qrcode.generate(qr, { small: false });
+      console.log('\n===== NEW QR (scan within 20 seconds) =====');
+      printQr(qr);
     }
     if (connection === 'open') {
       console.log(`${config.botName} connected`);
