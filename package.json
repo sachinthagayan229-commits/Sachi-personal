@@ -1,0 +1,20 @@
+{
+  "name": "sachi-personal",
+  "version": "1.0.0",
+  "description": "Sachi Personal - WhatsApp bot by Sachintha Gayan",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@distube/ytdl-core": "^4.14.4",
+    "@whiskeysockets/baileys": "^6.7.9",
+    "btch-downloader": "^2.4.0",
+    "pino": "^9.0.0",
+    "qrcode-terminal": "^0.12.0",
+    "yt-search": "^2.12.1"
+  }
+}
