@@ -167,7 +167,7 @@ _© ${config.owner}_`;
 // Support: base64 | gzip-base64 | PREFIX~xxx | Mega ID (xxx#yyy)
 async function loadSessionFromEnv() {
   const id = process.env.SESSION_ID;
-  if (!id) return;
+  if (!id || process.env.QR_LOGIN === 'true') return; // QR login නම් SESSION_ID පාවිච්චි කරන්නේ නෑ
   try {
     let raw = id.trim().replace(/^[A-Za-z0-9_-]{2,30}[~=]/, ''); // prefix අයින් කරනවා
     let text;
@@ -216,9 +216,9 @@ async function start() {
   const { version } = await fetchLatestBaileysVersion();
   const pairNumber = (process.env.PAIR_NUMBER || '').replace(/\D/g, '');
 
-  // GitHub Actions වල QR scan කරන්න බෑ, session නැත්නම් පැහැදිලිව error එකක් දෙනවා
-  if (process.env.GITHUB_ACTIONS && !state.creds.me && !pairNumber) {
-    console.log('❌ Session එකක් නෑ! SESSION_ID secret එක හරියට දාන්න, නැත්නම් Run workflow එකේ pair_number දෙන්න.');
+  // GitHub Actions වල session නැත්නම් පැහැදිලිව error එකක් දෙනවා
+  if (process.env.GITHUB_ACTIONS && !state.creds.me && !pairNumber && process.env.QR_LOGIN !== 'true') {
+    console.log('❌ Session එකක් නෑ! SESSION_ID secret එක හරියට දාන්න, නැත්නම් Run workflow එකේ pair_number දෙන්න / use_qr ටික් කරන්න.');
     process.exit(1);
   }
   console.log('⏳ Connecting...', state.creds.me ? '(session: ' + num(state.creds.me.id) + ')' : '(new login)');
@@ -251,7 +251,10 @@ async function start() {
   }
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    if (qr && !pairNumber) qrcode.generate(qr, { small: true });
+    if (qr && !pairNumber) {
+      console.log('\n📲 මේ QR එක වෙන device එකකින් WhatsApp > Linked Devices > Link a device වලින් scan කරන්න (තත්පර 20කට සැරයක් අලුත් වෙනවා):\n');
+      qrcode.generate(qr, { small: false });
+    }
     if (connection === 'open') {
       console.log(`✅ ${config.botName} connected`);
       sock.sendMessage(ownerJid, { text: `✅ *${config.botName}* online!\nMenu එක බලන්න ${config.prefix}menu` }).catch(() => {});
