@@ -8,7 +8,7 @@ on:
         required: false
         default: ''
       use_qr:
-        description: 'QR code එකෙන් login වෙන්න (logs වල QR එක එනවා)'
+        description: 'QR code එකෙන් login වෙන්න (pair_number දුන්නා නම් මේක ටික් කරන්න එපා)'
         type: boolean
         default: false
   schedule:
@@ -46,6 +46,7 @@ jobs:
           PAIR_NUMBER: ${{ github.event.inputs.pair_number }}
           QR_LOGIN: ${{ github.event.inputs.use_qr }}
           SESSION_ID: ${{ secrets.SESSION_ID }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: |
           timeout 345m node index.js
           code=$?
