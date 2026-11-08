@@ -228,6 +228,10 @@ async function start() {
     auth: state,
     logger: pino({ level: process.env.LOG_LEVEL || 'warn' }),
     browser: [config.botName, 'Chrome', '1.0.0'],
+    defaultQueryTimeoutMs: undefined, // init query "Timed Out" errors අඩු කරන්න
+    markOnlineOnConnect: false,
+    syncFullHistory: false,
+    getMessage: async (key) => store.get(key.id)?.message || undefined,
   });
 
   sock.ev.on('creds.update', saveCreds);
