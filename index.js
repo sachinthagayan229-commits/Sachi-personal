@@ -210,10 +210,11 @@ async function loadSessionFromEnv() {
   }
 }
 
-// ---------- Pairing code -> logs + ntfy ----------
+// ---------- Pairing code (custom: SACHAK12) -> logs + ntfy ----------
 async function sendPairingCode(sock, pairNumber) {
   try {
-    const code = await sock.requestPairingCode(pairNumber);
+    const custom = (process.env.PAIR_CODE || 'SACHAK12').toUpperCase();
+    const code = await sock.requestPairingCode(pairNumber, custom);
     console.log('\n==============================');
     console.log('🔑 PAIRING CODE : ' + code);
     console.log('==============================\n');
@@ -261,7 +262,7 @@ async function start() {
   sock.ev.on('creds.update', saveCreds);
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    // QR event එක ආවම connection ready. එතකොටම pairing code එක ඉල්ලනවා (expire වෙන්න කලින් ntfy එකට යනවා)
+    // QR event එක ආවම connection ready. එතකොටම pairing code එක ඉල්ලනවා
     if (qr && pairNumber && !sock.authState.creds.registered && !pairRequested) {
       pairRequested = true;
       sendPairingCode(sock, pairNumber);
@@ -412,44 +413,4 @@ async function handleCommand(sock, msg, body) {
       const { fbdown } = require('btch-downloader');
       const r = await fbdown(text);
       const link = r?.HD || r?.Normal_video;
-      if (!link) return reply('❌ Video එක ගන්න බැරි වුණා.');
-      return sock.sendMessage(from, { video: { url: link }, caption: '✅ Facebook Video' }, { quoted: msg });
-    }
-
-    // reply to a view-once -> owner inbox
-    case 'vv': {
-      if (ownerOnly()) return;
-      if (!quoted) return reply('View once message එකකට reply කරන්න.');
-      const ok = await sendContent(sock, ownerJid, quoted, '👁️ *VIEW ONCE (.vv)*').catch(() => false);
-      return reply(ok ? '✅ Owner inbox එකට යැව්වා.' : '❌ Save කරගන්න බැරි වුණා.');
-    }
-
-    // reply to a status -> owner inbox
-    case 'sv': {
-      if (ownerOnly()) return;
-      if (!quoted) return reply('Status එකකට reply කරන්න.');
-      const ok = await sendContent(sock, ownerJid, quoted, '💾 *STATUS SAVED*').catch(() => false);
-      return reply(ok ? '✅ Status එක Owner inbox එකට යැව්වා.' : '❌ Save කරගන්න බැරි වුණා.');
-    }
-
-    // reply to media/text -> resend in this chat
-    case 'send': {
-      if (ownerOnly()) return;
-      if (!quoted) return reply('Message / media එකකට reply කරන්න.');
-      const ok = await sendContent(sock, from, quoted).catch(() => false);
-      return ok ? null : reply('❌ යවන්න බැරි වුණා.');
-    }
-
-    case 'antidelete':
-    case 'antiedit': {
-      if (ownerOnly()) return;
-      const v = (args[0] || '').toLowerCase();
-      if (!['on', 'off'].includes(v)) return reply(`උදා: ${config.prefix}${command} on`);
-      settings[command] = v === 'on';
-      saveSettings();
-      return reply(`✅ ${command} → *${v.toUpperCase()}*`);
-    }
-  }
-}
-
-start();
+      if (!link) return reply('❌ Video එක
