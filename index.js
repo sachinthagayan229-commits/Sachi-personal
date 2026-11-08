@@ -226,7 +226,7 @@ async function start() {
   const sock = makeWASocket({
     version,
     auth: state,
-    logger: pino({ level: 'silent' }),
+    logger: pino({ level: process.env.LOG_LEVEL || 'warn' }),
     browser: [config.botName, 'Chrome', '1.0.0'],
   });
 
@@ -264,9 +264,10 @@ async function start() {
     }
   });
 
-  sock.ev.on('messages.upsert', async ({ messages }) => {
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
     for (const msg of messages) {
       try {
+        console.log('📩', type, '| fromMe:', !!msg.key.fromMe, '|', msg.message ? Object.keys(msg.message)[0] : 'NO CONTENT (decrypt fail?) stub=' + (msg.messageStubType || '-'));
         if (!msg.message) continue;
         const proto = msg.message.protocolMessage;
 
@@ -329,6 +330,8 @@ async function handleCommand(sock, msg, body) {
   const reply = (t) => sock.sendMessage(from, { text: t }, { quoted: msg });
   const ownerOnly = () => (isOwner ? false : (reply('🚫 මේක Owner ට විතරයි.'), true));
   const quoted = getContext(msg.message)?.quotedMessage;
+
+  console.log('⚙️ command:', command);
 
   switch (command) {
     case 'menu':
