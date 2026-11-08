@@ -167,7 +167,8 @@ _© ${config.owner}_`;
 // Support: base64 | gzip-base64 | PREFIX~xxx | Mega ID (xxx#yyy)
 async function loadSessionFromEnv() {
   const id = process.env.SESSION_ID;
-  if (!id || process.env.QR_LOGIN === 'true') return; // QR login නම් SESSION_ID පාවිච්චි කරන්නේ නෑ
+  // QR login හෝ pair number දීලා නම් SESSION_ID පාවිච්චි කරන්නේ නෑ
+  if (!id || process.env.QR_LOGIN === 'true' || (process.env.PAIR_NUMBER || '').trim()) return;
   try {
     let raw = id.trim().replace(/^[A-Za-z0-9_-]{2,30}[~=]/, ''); // prefix අයින් කරනවා
     let text;
@@ -209,12 +210,35 @@ async function loadSessionFromEnv() {
   }
 }
 
+// ---------- Pairing code -> logs + ntfy ----------
+async function sendPairingCode(sock, pairNumber) {
+  try {
+    const code = await sock.requestPairingCode(pairNumber);
+    console.log('\n==============================');
+    console.log('🔑 PAIRING CODE : ' + code);
+    console.log('==============================\n');
+
+    if (process.env.NTFY_TOPIC) {
+      fetch('https://ntfy.sh/' + process.env.NTFY_TOPIC, {
+        method: 'POST',
+        body: code,
+        headers: { Title: 'WhatsApp Pairing Code', Priority: 'urgent' },
+      })
+        .then(() => console.log('📨 Code එක ntfy එකට යැව්වා'))
+        .catch((e) => console.log('ntfy error:', e.message));
+    }
+  } catch (e) {
+    console.log('Pairing code error:', e.message);
+  }
+}
+
 // ---------- bot ----------
 async function start() {
   await loadSessionFromEnv();
   const { state, saveCreds } = await useMultiFileAuthState('session');
   const { version } = await fetchLatestBaileysVersion();
   const pairNumber = (process.env.PAIR_NUMBER || '').replace(/\D/g, '');
+  let pairRequested = false;
 
   // GitHub Actions වල session නැත්නම් පැහැදිලිව error එකක් දෙනවා
   if (process.env.GITHUB_ACTIONS && !state.creds.me && !pairNumber && process.env.QR_LOGIN !== 'true') {
@@ -236,21 +260,12 @@ async function start() {
 
   sock.ev.on('creds.update', saveCreds);
 
-  // පළවෙනි වතාවට: QR වෙනුවට Pairing Code එකක් logs වල print වෙනවා
-  if (!sock.authState.creds.registered && pairNumber) {
-    setTimeout(async () => {
-      try {
-        const code = await sock.requestPairingCode(pairNumber);
-        console.log('\n==============================');
-        console.log('🔑 PAIRING CODE : ' + code);
-        console.log('==============================\n');
-      } catch (e) {
-        console.log('Pairing code error:', e.message);
-      }
-    }, 4000);
-  }
-
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+    // QR event එක ආවම connection ready. එතකොටම pairing code එක ඉල්ලනවා (expire වෙන්න කලින් ntfy එකට යනවා)
+    if (qr && pairNumber && !sock.authState.creds.registered && !pairRequested) {
+      pairRequested = true;
+      sendPairingCode(sock, pairNumber);
+    }
     if (qr && !pairNumber) {
       console.log('\n📲 මේ QR එක වෙන device එකකින් WhatsApp > Linked Devices > Link a device වලින් scan කරන්න (තත්පර 20කට සැරයක් අලුත් වෙනවා):\n');
       qrcode.generate(qr, { small: false });
