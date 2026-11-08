@@ -4,17 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       pair_number:
-        description: 'පළවෙනි වතාවට විතරයි: WhatsApp number (94771234567 වගේ, + නැතිව)'
+        description: 'First time only (pairing code mode): WhatsApp number like 94771234567, no plus sign'
         required: false
         default: ''
       use_qr:
-        description: 'QR code එකෙන් login වෙන්න (pair_number දුන්නා නම් මේක ටික් කරන්න එපා)'
+        description: 'Login with QR code (QR will be printed in the logs)'
         type: boolean
         default: false
   schedule:
-    - cron: '0 */6 * * *'   # පැය 6කට සැරයක් auto restart
+    - cron: '0 */6 * * *'
 
-# එකවර instance දෙකක් run වෙන්න දෙන්නෙ නෑ (session conflict වෙනවා)
 concurrency:
   group: sachi-bot
   cancel-in-progress: false
@@ -32,7 +31,9 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          npm install
+          npm install qrcode --no-save
 
       - name: Restore session cache
         uses: actions/cache/restore@v4
