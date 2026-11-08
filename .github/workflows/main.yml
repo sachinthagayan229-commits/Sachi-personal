@@ -7,6 +7,10 @@ on:
         description: 'පළවෙනි වතාවට විතරයි: WhatsApp number (94771234567 වගේ, + නැතිව)'
         required: false
         default: ''
+      use_qr:
+        description: 'QR code එකෙන් login වෙන්න (logs වල QR එක එනවා)'
+        type: boolean
+        default: false
   schedule:
     - cron: '0 */6 * * *'   # පැය 6කට සැරයක් auto restart
 
@@ -40,8 +44,12 @@ jobs:
       - name: Run bot
         env:
           PAIR_NUMBER: ${{ github.event.inputs.pair_number }}
+          QR_LOGIN: ${{ github.event.inputs.use_qr }}
           SESSION_ID: ${{ secrets.SESSION_ID }}
-        run: timeout 345m node index.js || true
+        run: |
+          timeout 345m node index.js
+          code=$?
+          if [ $code -ne 124 ]; then exit $code; fi
 
       - name: Save session cache
         if: always()
