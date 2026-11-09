@@ -337,4 +337,188 @@ async function start() {
       const code = lastDisconnect?.error?.output?.statusCode;
       console.log('Connection closed. code =', code, '|', lastDisconnect?.error?.message || '');
       if (code === DisconnectReason.loggedOut) {
-        console.log('Logged o
+        console.log('Logged out. Delete the "session" folder and run again.');
+      } else {
+        console.log('Reconnecting...');
+        setTimeout(start, 3000);
+      }
+    }
+  });
+
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    for (const msg of messages) {
+      try {
+        console.log('msg', type, '| fromMe:', !!msg.key.fromMe, '|', msg.message ? Object.keys(msg.message)[0] : 'NO CONTENT stub=' + (msg.messageStubType || '-'));
+        if (!msg.message) continue;
+        const proto = msg.message.protocolMessage;
+
+        // ----- AntiDelete / AntiEdit -----
+        if (proto) {
+          // 0 = REVOKE (delete), 14 = MESSAGE_EDIT
+          if (proto.type === 0 && settings.antidelete) {
+            const orig = store.get(proto.key?.id);
+            if (orig && !orig.key.fromMe) {
+              const who = orig.key.participant || orig.key.remoteJid;
+              const note =
+                `*ANTI DELETE*\nFrom: @${num(who)}\nChat: ${orig.key.remoteJid.endsWith('@g.us') ? 'Group' : 'Inbox'}`;
+              const ok = await sendContent(sock, ownerJid, orig.message, note).catch(() => false);
+              if (!ok) await sock.sendMessage(ownerJid, { text: note + '\n\n_(could not save content)_', mentions: [who] });
+            }
+          }
+          if (proto.type === 14 && settings.antiedit) {
+            const orig = store.get(proto.key?.id);
+            const newText = getText(proto.editedMessage);
+            if (orig && !orig.key.fromMe) {
+              const who = orig.key.participant || orig.key.remoteJid;
+              await sock.sendMessage(ownerJid, {
+                text: `*ANTI EDIT*\nFrom: @${num(who)}\n\n*Old:* ${getText(orig.message) || '_(media)_'}\n*New:* ${newText}`,
+                mentions: [who],
+              });
+              orig.message = proto.editedMessage || orig.message;
+            }
+          }
+          continue;
+        }
+
+        keep(msg);
+        if (msg.key.remoteJid === 'status@broadcast') continue;
+
+        // ----- Auto View-Once -> owner inbox -----
+        if (settings.autoViewOnce && !msg.key.fromMe && isViewOnce(msg.message)) {
+          const who = msg.key.participant || msg.key.remoteJid;
+          await sendContent(sock, ownerJid, msg.message, `*VIEW ONCE SAVED*\nFrom: @${num(who)}`).catch(() => {});
+        }
+
+        // ----- Commands -----
+        const body = getText(msg.message).trim();
+        if (!body.startsWith(config.prefix)) continue;
+        await handleCommand(sock, msg, body);
+      } catch (e) {
+        console.error('msg error:', e.message);
+      }
+    }
+  });
+}
+
+async function handleCommand(sock, msg, body) {
+  const from = msg.key.remoteJid;
+  const sender = msg.key.participant || from;
+  const isOwner = msg.key.fromMe || num(sender) === config.ownerNumber;
+  const [cmd, ...args] = body.slice(config.prefix.length).trim().split(/\s+/);
+  const command = cmd.toLowerCase();
+  const text = args.join(' ');
+  const reply = (t) => sock.sendMessage(from, { text: t }, { quoted: msg });
+  const ownerOnly = () => (isOwner ? false : (reply('Owner only command.'), true));
+  const quoted = getContext(msg.message)?.quotedMessage;
+
+  console.log('command:', command);
+
+  switch (command) {
+    case 'menu':
+    case 'help':
+      return sock.sendMessage(from, { text: menuText() }, { quoted: msg });
+
+    case 'alive':
+      return reply(`*${config.botName}* is alive! ✅\nOwner: ${config.owner}\nPrefix: ${config.prefix}`);
+
+    case 'ping': {
+      const t = Date.now();
+      await reply('Pinging...');
+      return reply(`Pong! *${Date.now() - t} ms*`);
+    }
+
+    case 'update': {
+      if (ownerOnly()) return;
+      await reply('Updating...');
+      return exec('git pull', async (err, out) => {
+        if (err) return reply('Update failed: ' + err.message);
+        await reply(out.trim() + '\nRestarting...');
+        setTimeout(() => process.exit(0), 1500);
+      });
+    }
+
+    case 'song':
+    case 'yt': {
+      if (!text) return reply(`Example: ${config.prefix}${command} shape of you`);
+      const isSong = command === 'song';
+      await reply('🔎 Searching...');
+      try {
+        let video;
+        const vid = getVideoId(text);
+        if (vid) {
+          video = await yts({ videoId: vid });
+          if (video && !video.url) video.url = 'https://www.youtube.com/watch?v=' + vid;
+        } else {
+          video = (await yts(text)).videos[0];
+        }
+        if (!video) return reply('No results.');
+        if (video.seconds > 1200) return reply('Videos longer than 20 minutes are not allowed.');
+
+        await sock.sendMessage(from, {
+          image: { url: video.thumbnail },
+          caption: `*${video.title}*\n⏱️ ${video.timestamp || video.seconds + 's'}\n\n⬇️ Downloading...`,
+        }, { quoted: msg });
+
+        const buf = await getYtMedia(video, isSong);
+        if (isSong) {
+          return sock.sendMessage(from, { audio: buf, mimetype: 'audio/mp4', fileName: video.title + '.m4a' }, { quoted: msg });
+        }
+        return sock.sendMessage(from, { video: buf, mimetype: 'video/mp4', caption: video.title }, { quoted: msg });
+      } catch (e) {
+        console.error('song/yt error:', e.message);
+        return reply('❌ Download failed: ' + e.message);
+      }
+    }
+
+    case 'fb': {
+      if (!text) return reply(`Example: ${config.prefix}fb https://facebook.com/...`);
+      await reply('⬇️ Downloading...');
+      try {
+        const { fbdown } = require('btch-downloader');
+        const r = await fbdown(text);
+        const link = r?.HD || r?.Normal_video;
+        if (!link) return reply('Could not get the video.');
+        return sock.sendMessage(from, { video: { url: link }, caption: 'Facebook Video' }, { quoted: msg });
+      } catch (e) {
+        console.error('fb error:', e.message);
+        return reply('❌ Download failed: ' + e.message);
+      }
+    }
+
+    // reply to a view-once -> owner inbox
+    case 'vv': {
+      if (ownerOnly()) return;
+      if (!quoted) return reply('Reply to a view-once message.');
+      const ok = await sendContent(sock, ownerJid, quoted, '*VIEW ONCE (.vv)*').catch(() => false);
+      return reply(ok ? 'Sent to owner inbox.' : 'Could not save it.');
+    }
+
+    // reply to a status -> owner inbox
+    case 'sv': {
+      if (ownerOnly()) return;
+      if (!quoted) return reply('Reply to a status.');
+      const ok = await sendContent(sock, ownerJid, quoted, '*STATUS SAVED*').catch(() => false);
+      return reply(ok ? 'Status sent to owner inbox.' : 'Could not save it.');
+    }
+
+    // reply to media/text -> resend in this chat
+    case 'send': {
+      if (ownerOnly()) return;
+      if (!quoted) return reply('Reply to a message or media.');
+      const ok = await sendContent(sock, from, quoted).catch(() => false);
+      return ok ? null : reply('Could not send it.');
+    }
+
+    case 'antidelete':
+    case 'antiedit': {
+      if (ownerOnly()) return;
+      const v = (args[0] || '').toLowerCase();
+      if (!['on', 'off'].includes(v)) return reply(`Example: ${config.prefix}${command} on`);
+      settings[command] = v === 'on';
+      saveSettings();
+      return reply(`${command} is now *${v.toUpperCase()}*`);
+    }
+  }
+}
+
+start();
