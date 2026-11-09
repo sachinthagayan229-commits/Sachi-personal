@@ -1,3 +1,9 @@
+// hide libsignal session dumps (they print private keys)
+const _info = console.info, _warn = console.warn;
+const noisy = (a) => typeof a[0] === 'string' && /^(Closing session|Opening session|Removing old closed session|Migrating session|Session already|Decrypted message with closed session)/.test(a[0]);
+console.info = (...a) => { if (!noisy(a)) _info(...a); };
+console.warn = (...a) => { if (!noisy(a)) _warn(...a); };
+
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -181,14 +187,42 @@ function menuText() {
 │ ◦ ${p}send  _(reply media)_
 │ ◦ ${p}antidelete on/off
 │ ◦ ${p}antiedit on/off
+│ ◦ ${p}autovv on/off
 ╰───────────────
 
 ╭─「 🛡️ *STATUS* 」
 │ ◦ AntiDelete : ${settings.antidelete ? '✅ ON' : '❌ OFF'}
 │ ◦ AntiEdit   : ${settings.antiedit ? '✅ ON' : '❌ OFF'}
+│ ◦ AutoViewOnce : ${settings.autoViewOnce ? '✅ ON' : '❌ OFF'}
 ╰───────────────
 
 _© ${config.owner}_`;
+}
+
+// ---------- menu image ----------
+// Priority: config.menuImage (URL or file path) -> menu.jpg / menu.png in repo root -> text only
+function getMenuImage() {
+  const img = config.menuImage;
+  if (img) {
+    if (/^https?:\/\//.test(img)) return { url: img };
+    if (fs.existsSync(img)) return fs.readFileSync(img);
+  }
+  for (const f of ['menu.jpg', 'menu.jpeg', 'menu.png', 'menu.webp']) {
+    if (fs.existsSync(f)) return fs.readFileSync(f);
+  }
+  return null;
+}
+
+async function sendMenu(sock, from, msg) {
+  const img = getMenuImage();
+  if (img) {
+    try {
+      return await sock.sendMessage(from, { image: img, caption: menuText() }, { quoted: msg });
+    } catch (e) {
+      console.log('menu image failed, sending text:', e.message);
+    }
+  }
+  return sock.sendMessage(from, { text: menuText() }, { quoted: msg });
 }
 
 // ---------- SESSION_ID ----------
@@ -416,7 +450,7 @@ async function handleCommand(sock, msg, body) {
   switch (command) {
     case 'menu':
     case 'help':
-      return sock.sendMessage(from, { text: menuText() }, { quoted: msg });
+      return sendMenu(sock, from, msg);
 
     case 'alive':
       return reply(`*${config.botName}* is alive! ✅\nOwner: ${config.owner}\nPrefix: ${config.prefix}`);
@@ -507,6 +541,15 @@ async function handleCommand(sock, msg, body) {
       if (!quoted) return reply('Reply to a message or media.');
       const ok = await sendContent(sock, from, quoted).catch(() => false);
       return ok ? null : reply('Could not send it.');
+    }
+
+    case 'autovv': {
+      if (ownerOnly()) return;
+      const v = (args[0] || '').toLowerCase();
+      if (!['on', 'off'].includes(v)) return reply(`Example: ${config.prefix}autovv on`);
+      settings.autoViewOnce = v === 'on';
+      saveSettings();
+      return reply(`autoViewOnce is now *${v.toUpperCase()}*`);
     }
 
     case 'antidelete':
