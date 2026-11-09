@@ -123,39 +123,72 @@ async function sendContent(sock, jid, content, caption = '') {
   return true;
 }
 
+// ---------- YouTube helpers ----------
+function getVideoId(url) {
+  const m = String(url).match(/(?:youtu\.be\/|v=|\/shorts\/|\/embed\/|\/live\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
+// Download audio/video as Buffer.
+// 1) btch-downloader (third-party API, works from GitHub servers)
+// 2) ytdl-core fallback (often blocked on GitHub servers)
+async function getYtMedia(video, isSong) {
+  try {
+    const b = require('btch-downloader');
+    const r = isSong ? await b.ytmp3(video.url) : await b.ytmp4(video.url);
+    const link =
+      r?.mp3 || r?.mp4 || r?.url || r?.download || r?.result?.mp3 || r?.result?.mp4 || r?.result?.download || r?.result?.url;
+    if (link) {
+      const res = await fetch(link);
+      if (res.ok) return Buffer.from(await res.arrayBuffer());
+      console.log('btch download http', res.status);
+    } else {
+      console.log('btch gave no link:', JSON.stringify(r).slice(0, 200));
+    }
+  } catch (e) {
+    console.log('btch yt failed:', e.message);
+  }
+  return streamToBuffer(ytdl(video.url, { quality: isSong ? '140' : '18' }));
+}
+
 // ---------- menu ----------
 function menuText() {
   const p = config.prefix;
   const up = Math.floor((Date.now() - startTime) / 1000);
   const h = Math.floor(up / 3600), m = Math.floor((up % 3600) / 60), s = up % 60;
-  return `*${config.botName.toUpperCase()}*
+  return `╭━━━━〔 *${config.botName.toUpperCase()}* 〕━━━━╮
+┃ 👤 *Owner*  : ${config.owner}
+┃ 🔹 *Prefix* : ${p}
+┃ ⏱️ *Uptime* : ${h}h ${m}m ${s}s
+╰━━━━━━━━━━━━━━━━━━━━╯
 
-Owner  : ${config.owner}
-Prefix : ${p}
-Uptime : ${h}h ${m}m ${s}s
+╭─「 ⚙️ *MAIN* 」
+│ ◦ ${p}menu
+│ ◦ ${p}alive
+│ ◦ ${p}ping
+│ ◦ ${p}update
+╰───────────────
 
-*MAIN*
-- ${p}menu
-- ${p}alive
-- ${p}ping
-- ${p}update
+╭─「 📥 *DOWNLOAD* 」
+│ ◦ ${p}song <name / link>
+│ ◦ ${p}yt <name / link>
+│ ◦ ${p}fb <link>
+╰───────────────
 
-*DOWNLOAD*
-- ${p}song <name / link>
-- ${p}yt <name / link>
-- ${p}fb <link>
+╭─「 👑 *OWNER TOOLS* 」
+│ ◦ ${p}vv  _(reply view-once)_
+│ ◦ ${p}sv  _(reply status)_
+│ ◦ ${p}send  _(reply media)_
+│ ◦ ${p}antidelete on/off
+│ ◦ ${p}antiedit on/off
+╰───────────────
 
-*OWNER TOOLS*
-- ${p}vv  (reply view-once)
-- ${p}sv  (reply status)
-- ${p}send  (reply media)
-- ${p}antidelete on/off
-- ${p}antiedit on/off
+╭─「 🛡️ *STATUS* 」
+│ ◦ AntiDelete : ${settings.antidelete ? '✅ ON' : '❌ OFF'}
+│ ◦ AntiEdit   : ${settings.antiedit ? '✅ ON' : '❌ OFF'}
+╰───────────────
 
-AntiDelete : ${settings.antidelete ? 'ON' : 'OFF'}
-AntiEdit   : ${settings.antiedit ? 'ON' : 'OFF'}
-
-_${config.owner}_`;
+_© ${config.owner}_`;
 }
 
 // ---------- SESSION_ID ----------
@@ -298,183 +331,10 @@ async function start() {
     }
     if (connection === 'open') {
       console.log(`${config.botName} connected`);
-      sock.sendMessage(ownerJid, { text: `*${config.botName}* online!\nSend ${config.prefix}menu to see commands` }).catch(() => {});
+      sock.sendMessage(ownerJid, { text: `*${config.botName}* online! ✅\nSend ${config.prefix}menu to see commands` }).catch(() => {});
     }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
       console.log('Connection closed. code =', code, '|', lastDisconnect?.error?.message || '');
       if (code === DisconnectReason.loggedOut) {
-        console.log('Logged out. Delete the "session" folder and run again.');
-      } else {
-        console.log('Reconnecting...');
-        setTimeout(start, 3000);
-      }
-    }
-  });
-
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    for (const msg of messages) {
-      try {
-        console.log('msg', type, '| fromMe:', !!msg.key.fromMe, '|', msg.message ? Object.keys(msg.message)[0] : 'NO CONTENT stub=' + (msg.messageStubType || '-'));
-        if (!msg.message) continue;
-        const proto = msg.message.protocolMessage;
-
-        // ----- AntiDelete / AntiEdit -----
-        if (proto) {
-          // 0 = REVOKE (delete), 14 = MESSAGE_EDIT
-          if (proto.type === 0 && settings.antidelete) {
-            const orig = store.get(proto.key?.id);
-            if (orig && !orig.key.fromMe) {
-              const who = orig.key.participant || orig.key.remoteJid;
-              const note =
-                `*ANTI DELETE*\nFrom: @${num(who)}\nChat: ${orig.key.remoteJid.endsWith('@g.us') ? 'Group' : 'Inbox'}`;
-              const ok = await sendContent(sock, ownerJid, orig.message, note).catch(() => false);
-              if (!ok) await sock.sendMessage(ownerJid, { text: note + '\n\n_(could not save content)_', mentions: [who] });
-            }
-          }
-          if (proto.type === 14 && settings.antiedit) {
-            const orig = store.get(proto.key?.id);
-            const newText = getText(proto.editedMessage);
-            if (orig && !orig.key.fromMe) {
-              const who = orig.key.participant || orig.key.remoteJid;
-              await sock.sendMessage(ownerJid, {
-                text: `*ANTI EDIT*\nFrom: @${num(who)}\n\n*Old:* ${getText(orig.message) || '_(media)_'}\n*New:* ${newText}`,
-                mentions: [who],
-              });
-              orig.message = proto.editedMessage || orig.message;
-            }
-          }
-          continue;
-        }
-
-        keep(msg);
-        if (msg.key.remoteJid === 'status@broadcast') continue;
-
-        // ----- Auto View-Once -> owner inbox -----
-        if (settings.autoViewOnce && !msg.key.fromMe && isViewOnce(msg.message)) {
-          const who = msg.key.participant || msg.key.remoteJid;
-          await sendContent(sock, ownerJid, msg.message, `*VIEW ONCE SAVED*\nFrom: @${num(who)}`).catch(() => {});
-        }
-
-        // ----- Commands -----
-        const body = getText(msg.message).trim();
-        if (!body.startsWith(config.prefix)) continue;
-        await handleCommand(sock, msg, body);
-      } catch (e) {
-        console.error('msg error:', e.message);
-      }
-    }
-  });
-}
-
-async function handleCommand(sock, msg, body) {
-  const from = msg.key.remoteJid;
-  const sender = msg.key.participant || from;
-  const isOwner = msg.key.fromMe || num(sender) === config.ownerNumber;
-  const [cmd, ...args] = body.slice(config.prefix.length).trim().split(/\s+/);
-  const command = cmd.toLowerCase();
-  const text = args.join(' ');
-  const reply = (t) => sock.sendMessage(from, { text: t }, { quoted: msg });
-  const ownerOnly = () => (isOwner ? false : (reply('Owner only command.'), true));
-  const quoted = getContext(msg.message)?.quotedMessage;
-
-  console.log('command:', command);
-
-  switch (command) {
-    case 'menu':
-    case 'help':
-      return sock.sendMessage(from, { text: menuText() }, { quoted: msg });
-
-    case 'alive':
-      return reply(`*${config.botName}* is alive!\nOwner: ${config.owner}\nPrefix: ${config.prefix}`);
-
-    case 'ping': {
-      const t = Date.now();
-      await reply('Pinging...');
-      return reply(`Pong! *${Date.now() - t} ms*`);
-    }
-
-    case 'update': {
-      if (ownerOnly()) return;
-      await reply('Updating...');
-      return exec('git pull', async (err, out) => {
-        if (err) return reply('Update failed: ' + err.message);
-        await reply(out.trim() + '\nRestarting...');
-        setTimeout(() => process.exit(0), 1500);
-      });
-    }
-
-    case 'song':
-    case 'yt': {
-      if (!text) return reply(`Example: ${config.prefix}${command} shape of you`);
-      const isSong = command === 'song';
-      await reply('Searching...');
-      let video;
-      if (ytdl.validateURL(text)) {
-        const info = await ytdl.getBasicInfo(text);
-        video = { url: text, title: info.videoDetails.title, seconds: +info.videoDetails.lengthSeconds, thumbnail: info.videoDetails.thumbnails.pop()?.url };
-      } else {
-        video = (await yts(text)).videos[0];
-      }
-      if (!video) return reply('No results.');
-      if (video.seconds > 1200) return reply('Videos longer than 20 minutes are not allowed.');
-
-      await sock.sendMessage(from, {
-        image: { url: video.thumbnail },
-        caption: `*${video.title}*\n${video.timestamp || video.seconds + 's'}\n\nDownloading...`,
-      }, { quoted: msg });
-
-      const buf = await streamToBuffer(ytdl(video.url, { quality: isSong ? '140' : '18' }));
-      if (isSong) {
-        return sock.sendMessage(from, { audio: buf, mimetype: 'audio/mp4', fileName: video.title + '.m4a' }, { quoted: msg });
-      }
-      return sock.sendMessage(from, { video: buf, mimetype: 'video/mp4', caption: video.title }, { quoted: msg });
-    }
-
-    case 'fb': {
-      if (!text) return reply(`Example: ${config.prefix}fb https://facebook.com/...`);
-      await reply('Downloading...');
-      const { fbdown } = require('btch-downloader');
-      const r = await fbdown(text);
-      const link = r?.HD || r?.Normal_video;
-      if (!link) return reply('Could not get the video.');
-      return sock.sendMessage(from, { video: { url: link }, caption: 'Facebook Video' }, { quoted: msg });
-    }
-
-    // reply to a view-once -> owner inbox
-    case 'vv': {
-      if (ownerOnly()) return;
-      if (!quoted) return reply('Reply to a view-once message.');
-      const ok = await sendContent(sock, ownerJid, quoted, '*VIEW ONCE (.vv)*').catch(() => false);
-      return reply(ok ? 'Sent to owner inbox.' : 'Could not save it.');
-    }
-
-    // reply to a status -> owner inbox
-    case 'sv': {
-      if (ownerOnly()) return;
-      if (!quoted) return reply('Reply to a status.');
-      const ok = await sendContent(sock, ownerJid, quoted, '*STATUS SAVED*').catch(() => false);
-      return reply(ok ? 'Status sent to owner inbox.' : 'Could not save it.');
-    }
-
-    // reply to media/text -> resend in this chat
-    case 'send': {
-      if (ownerOnly()) return;
-      if (!quoted) return reply('Reply to a message or media.');
-      const ok = await sendContent(sock, from, quoted).catch(() => false);
-      return ok ? null : reply('Could not send it.');
-    }
-
-    case 'antidelete':
-    case 'antiedit': {
-      if (ownerOnly()) return;
-      const v = (args[0] || '').toLowerCase();
-      if (!['on', 'off'].includes(v)) return reply(`Example: ${config.prefix}${command} on`);
-      settings[command] = v === 'on';
-      saveSettings();
-      return reply(`${command} is now *${v.toUpperCase()}*`);
-    }
-  }
-}
-
-start();
+        console.log('Logged o
