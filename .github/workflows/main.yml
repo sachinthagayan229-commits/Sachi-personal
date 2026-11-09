@@ -12,7 +12,7 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */5 * * *'
 
 concurrency:
   group: sachi-bot
@@ -21,7 +21,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 300
 
     steps:
       - uses: actions/checkout@v4
@@ -49,8 +49,8 @@ jobs:
           SESSION_ID: ${{ secrets.SESSION_ID }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: |
-          timeout 345m node index.js
-          code=$?
+          code=0
+          timeout 295m node index.js || code=$?
           if [ $code -ne 124 ]; then exit $code; fi
 
       - name: Save session cache
