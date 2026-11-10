@@ -226,7 +226,7 @@ async function sendMenu(sock, from, msg) {
 }
 
 // ---------- SESSION_ID ----------
-// Supports: base64 | gzip-base64 | PREFIX~xxx | Mega ID (xxx#yyy)
+// Supports: raw creds.json | base64 | gzip-base64 | PREFIX~xxx | Mega ID (xxx#yyy)
 async function loadSessionFromEnv() {
   const id = process.env.SESSION_ID;
   // Skip when QR login or pair number is used
@@ -235,7 +235,10 @@ async function loadSessionFromEnv() {
     let raw = id.trim().replace(/^[A-Za-z0-9_-]{2,30}[~=]/, '');
     let text;
 
-    if (raw.includes('#')) {
+    if (id.trim().startsWith('{')) {
+      // raw creds.json pasted directly into the secret
+      text = id.trim();
+    } else if (raw.includes('#')) {
       console.log('Downloading session from Mega...');
       const { File } = require('megajs');
       const buf = await File.fromURL('https://mega.nz/file/' + raw).downloadBuffer();
