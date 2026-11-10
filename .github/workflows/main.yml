@@ -48,6 +48,7 @@ jobs:
           QR_LOGIN: ${{ github.event.inputs.use_qr }}
           SESSION_ID: ${{ secrets.SESSION_ID }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           code=0
           timeout 295m node index.js || code=$?
