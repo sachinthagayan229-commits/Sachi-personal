@@ -225,8 +225,23 @@ async function sendMenu(sock, from, msg) {
   return sock.sendMessage(from, { text: menuText() }, { quoted: msg });
 }
 
+// ---------- Gist session (MEGA-MD style: GlobalTechInfo/MEGA-MD_<gistId>) ----------
+async function fetchGist(gistId) {
+  const base = { 'User-Agent': 'sachi-bot', Accept: 'application/vnd.github+json' };
+  const get = (h) => fetch('https://api.github.com/gists/' + gistId, { headers: h });
+  let res = await get(process.env.GH_TOKEN ? { ...base, Authorization: 'Bearer ' + process.env.GH_TOKEN } : base);
+  if (!res.ok && process.env.GH_TOKEN) res = await get(base);
+  if (!res.ok) throw new Error('Gist fetch failed: HTTP ' + res.status);
+  const data = await res.json();
+  const files = Object.values(data.files || {});
+  if (!files.length) throw new Error('Gist has no files');
+  const f = files.find((x) => /creds|session|\.json$/i.test(x.filename)) || files[0];
+  if (f.truncated && f.raw_url) return (await fetch(f.raw_url)).text();
+  return f.content;
+}
+
 // ---------- SESSION_ID ----------
-// Supports: raw creds.json | base64 | gzip-base64 | PREFIX~xxx | Mega ID (xxx#yyy)
+// Supports: raw creds.json | Gist (MEGA-MD_xxx) | base64 | gzip-base64 | PREFIX~xxx | Mega ID (xxx#yyy)
 async function loadSessionFromEnv() {
   const id = process.env.SESSION_ID;
   // Skip when QR login or pair number is used
@@ -238,6 +253,9 @@ async function loadSessionFromEnv() {
     if (id.trim().startsWith('{')) {
       // raw creds.json pasted directly into the secret
       text = id.trim();
+    } else if (/^[\w.-]+\/[\w.-]+_[0-9a-f]{20,40}$/i.test(id.trim())) {
+      console.log('Downloading session from Gist...');
+      text = await fetchGist(id.trim().match(/_([0-9a-f]{20,40})$/i)[1]);
     } else if (raw.includes('#')) {
       console.log('Downloading session from Mega...');
       const { File } = require('megajs');
